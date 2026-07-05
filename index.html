@@ -1,0 +1,578 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>Scanner Courses — Prix &amp; Contenu</title>
+<script src="https://unpkg.com/@zxing/library@0.21.3/umd/index.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Inter:wght@400;500;600;700&display=swap');
+
+  :root{
+    --paper: #f6f3ea;
+    --paper-dark: #ece7d8;
+    --ink: #201f1c;
+    --ink-soft: #55524a;
+    --red: #c23b2e;
+    --green: #3c6b4a;
+    --line: #d8d2bf;
+  }
+
+  *{ box-sizing: border-box; }
+
+  body{
+    margin:0;
+    background: var(--paper-dark);
+    font-family: 'Inter', sans-serif;
+    color: var(--ink);
+    min-height: 100vh;
+    display:flex;
+    justify-content:center;
+    padding: 18px 12px 60px;
+  }
+
+  .receipt{
+    width:100%;
+    max-width: 480px;
+    background: var(--paper);
+    box-shadow: 0 2px 0 var(--line), 0 18px 40px -20px rgba(0,0,0,0.35);
+    padding: 22px 20px 28px;
+    position:relative;
+  }
+
+  /* signature element: barcode-stripe header, width pattern seeded by current date */
+  .barcode-strip{
+    height: 34px;
+    display:flex;
+    align-items:stretch;
+    gap:2px;
+    margin-bottom: 14px;
+  }
+  .barcode-strip span{ background: var(--ink); flex: 0 0 auto; }
+
+  header{
+    text-align:center;
+    margin-bottom: 18px;
+    border-bottom: 1px dashed var(--line);
+    padding-bottom: 14px;
+  }
+  header h1{
+    font-family:'Space Mono', monospace;
+    font-size: 19px;
+    letter-spacing: 0.5px;
+    margin: 0 0 4px;
+    text-transform: uppercase;
+  }
+  header p{
+    margin:0;
+    font-size: 12.5px;
+    color: var(--ink-soft);
+  }
+
+  .scan-zone{
+    background: var(--ink);
+    border-radius: 2px;
+    overflow:hidden;
+    position:relative;
+    margin-bottom: 14px;
+    min-height: 60px;
+  }
+  #video{ display:block; width:100%; max-height: 320px; object-fit: cover; }
+  .scan-guide{
+    position:absolute;
+    top:50%; left:8%;
+    width:84%; height:56px;
+    transform: translateY(-50%);
+    border: 2px solid var(--red);
+    border-radius: 2px;
+    box-shadow: 0 0 0 2000px rgba(0,0,0,0.35);
+    display:none;
+    pointer-events:none;
+  }
+  .scan-guide::after{
+    content:'';
+    position:absolute;
+    left:0; right:0; top:50%;
+    height:1px;
+    background: var(--red);
+    opacity:0.8;
+  }
+
+  .btn{
+    width:100%;
+    font-family:'Space Mono', monospace;
+    font-size: 14px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 13px;
+    border: 1.5px solid var(--ink);
+    background: var(--ink);
+    color: var(--paper);
+    cursor:pointer;
+    transition: transform 0.08s ease;
+  }
+  .btn:active{ transform: scale(0.98); }
+  .btn.secondary{
+    background: transparent;
+    color: var(--ink);
+  }
+  .btn.stop{
+    background: var(--red);
+    border-color: var(--red);
+  }
+
+  .manual-entry{
+    display:flex;
+    gap:8px;
+    margin-top: 10px;
+  }
+  .manual-entry input{
+    flex:1;
+    font-family:'Space Mono', monospace;
+    font-size: 14px;
+    padding: 10px;
+    border: 1.5px solid var(--ink);
+    background: var(--paper);
+    color: var(--ink);
+  }
+  .manual-entry input:focus{ outline: 2px solid var(--red); outline-offset: 1px; }
+
+  .status{
+    text-align:center;
+    font-size: 12.5px;
+    color: var(--ink-soft);
+    margin: 10px 0;
+    min-height: 16px;
+  }
+  .status.error{ color: var(--red); }
+
+  .product-card{
+    margin-top: 18px;
+    border-top: 1px dashed var(--line);
+    padding-top: 16px;
+    display:none;
+  }
+  .product-card.visible{ display:block; }
+
+  .product-head{
+    display:flex;
+    gap:12px;
+    margin-bottom: 12px;
+  }
+  .product-head img{
+    width: 72px;
+    height: 72px;
+    object-fit: contain;
+    background: white;
+    border: 1px solid var(--line);
+    flex-shrink:0;
+  }
+  .product-head .txt h2{
+    font-size: 16px;
+    margin: 0 0 3px;
+    line-height:1.25;
+  }
+  .product-head .txt .brand{
+    font-size: 12.5px;
+    color: var(--ink-soft);
+  }
+  .product-head .txt .ean{
+    font-family:'Space Mono', monospace;
+    font-size: 11px;
+    color: var(--ink-soft);
+    margin-top: 4px;
+  }
+
+  .badges{
+    display:flex;
+    gap:6px;
+    margin-bottom: 12px;
+    flex-wrap:wrap;
+  }
+  .badge{
+    font-family:'Space Mono', monospace;
+    font-size: 10.5px;
+    text-transform:uppercase;
+    padding: 3px 7px;
+    border: 1px solid var(--ink);
+    letter-spacing: 0.3px;
+  }
+  .badge.nutri-a{ background:#1a7a3e; color:white; border-color:#1a7a3e; }
+  .badge.nutri-b{ background:#7ab21e; color:white; border-color:#7ab21e; }
+  .badge.nutri-c{ background:#f0b000; color:white; border-color:#f0b000; }
+  .badge.nutri-d{ background:#e37400; color:white; border-color:#e37400; }
+  .badge.nutri-e{ background:#c23b2e; color:white; border-color:#c23b2e; }
+
+  details{
+    margin-bottom: 10px;
+    border: 1px solid var(--line);
+    background: rgba(255,255,255,0.4);
+  }
+  details summary{
+    padding: 8px 10px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor:pointer;
+  }
+  details .content{
+    padding: 0 10px 10px;
+    font-size: 12.5px;
+    line-height: 1.5;
+    color: var(--ink-soft);
+  }
+
+  .price-block{
+    background: var(--ink);
+    color: var(--paper);
+    padding: 14px;
+    margin-top: 14px;
+  }
+  .price-block label{
+    display:block;
+    font-family:'Space Mono', monospace;
+    font-size: 11.5px;
+    text-transform:uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 8px;
+  }
+  .price-row{
+    display:flex;
+    gap:8px;
+  }
+  .price-row input{
+    flex:1;
+    font-family:'Space Mono', monospace;
+    font-size: 20px;
+    padding: 8px 10px;
+    border: none;
+    background: var(--paper);
+    color: var(--ink);
+  }
+  .price-row button{
+    font-family:'Space Mono', monospace;
+    font-size: 13px;
+    text-transform:uppercase;
+    padding: 8px 14px;
+    border: 1.5px solid var(--paper);
+    background: transparent;
+    color: var(--paper);
+    cursor:pointer;
+  }
+  .price-note{
+    font-size: 11px;
+    color: var(--paper-dark);
+    margin-top: 8px;
+    opacity: 0.7;
+  }
+
+  .history{
+    margin-top: 20px;
+    border-top: 1px dashed var(--line);
+    padding-top: 14px;
+  }
+  .history h3{
+    font-family:'Space Mono', monospace;
+    font-size: 12.5px;
+    text-transform:uppercase;
+    letter-spacing:0.5px;
+    margin: 0 0 10px;
+    color: var(--ink-soft);
+  }
+  .history-item{
+    display:flex;
+    justify-content:space-between;
+    align-items:baseline;
+    font-size: 13px;
+    padding: 7px 0;
+    border-bottom: 1px dotted var(--line);
+    gap: 10px;
+  }
+  .history-item .name{ flex:1; }
+  .history-item .price{
+    font-family:'Space Mono', monospace;
+    font-weight:700;
+    color: var(--red);
+    white-space:nowrap;
+  }
+  .empty-history{
+    font-size: 12.5px;
+    color: var(--ink-soft);
+    font-style: italic;
+  }
+
+  .actions{ display:flex; gap:8px; margin-top: 6px; }
+  .actions .btn{ flex:1; }
+</style>
+</head>
+<body>
+
+<div class="receipt">
+  <div class="barcode-strip" id="barcodeStrip"></div>
+
+  <header>
+    <h1>Scanner Courses</h1>
+    <p>Contenu produit &amp; prix relevé en magasin</p>
+  </header>
+
+  <div class="scan-zone" id="scanZone">
+    <video id="video" muted playsinline></video>
+    <div class="scan-guide" id="scanGuide"></div>
+  </div>
+
+  <div class="actions">
+    <button class="btn" id="startBtn">Démarrer le scan</button>
+  </div>
+
+  <div class="manual-entry">
+    <input type="text" id="manualEan" placeholder="Ou saisir un code-barres (EAN)" inputmode="numeric">
+    <button class="btn secondary" id="manualBtn" style="width:auto; padding: 10px 16px;">OK</button>
+  </div>
+
+  <div class="status" id="status"></div>
+
+  <div class="product-card" id="productCard">
+    <div class="product-head">
+      <img id="prodImg" src="" alt="">
+      <div class="txt">
+        <h2 id="prodName">—</h2>
+        <div class="brand" id="prodBrand">—</div>
+        <div class="ean" id="prodEan">—</div>
+      </div>
+    </div>
+
+    <div class="badges" id="prodBadges"></div>
+
+    <details>
+      <summary>Ingrédients</summary>
+      <div class="content" id="prodIngredients">Non renseigné.</div>
+    </details>
+
+    <details>
+      <summary>Allergènes</summary>
+      <div class="content" id="prodAllergens">Non renseigné.</div>
+    </details>
+
+    <details>
+      <summary>Valeurs nutritionnelles (pour 100g)</summary>
+      <div class="content" id="prodNutrition">Non renseigné.</div>
+    </details>
+
+    <div class="price-block">
+      <label>Prix vu en magasin</label>
+      <div class="price-row">
+        <input type="number" step="0.01" id="priceInput" placeholder="0.00 €">
+        <button id="savePriceBtn">Enregistrer</button>
+      </div>
+      <div class="price-note">Saisie manuelle pour l'instant — non partagée. Une version avec base commune (Firestore) pourra suivre.</div>
+    </div>
+  </div>
+
+  <div class="history">
+    <h3>Relevés de cette session</h3>
+    <div id="historyList"><div class="empty-history">Aucun produit scanné pour l'instant.</div></div>
+  </div>
+</div>
+
+<script>
+  // --- Signature visual: barcode stripe seeded from today's date, purely decorative ---
+  (function renderBarcodeStrip(){
+    const strip = document.getElementById('barcodeStrip');
+    const seed = new Date().toISOString().slice(0,10).replace(/-/g,'');
+    let bars = [];
+    for (let i = 0; i < 40; i++){
+      const digit = parseInt(seed[i % seed.length], 10) || 1;
+      bars.push(2 + digit * 1.6);
+    }
+    bars.forEach(w => {
+      const el = document.createElement('span');
+      el.style.width = w + 'px';
+      strip.appendChild(el);
+    });
+  })();
+
+  let codeReader = null;
+  let mediaStream = null;
+  let scanning = false;
+  const history = []; // { name, price } — en mémoire, non persistant
+
+  const statusEl = document.getElementById('status');
+  const startBtn = document.getElementById('startBtn');
+  const videoEl = document.getElementById('video');
+  const scanGuide = document.getElementById('scanGuide');
+
+  function setStatus(msg, isError){
+    statusEl.textContent = msg || '';
+    statusEl.classList.toggle('error', !!isError);
+  }
+
+  function buildReader(){
+    const hints = new Map();
+    hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
+      ZXing.BarcodeFormat.EAN_13,
+      ZXing.BarcodeFormat.EAN_8,
+      ZXing.BarcodeFormat.UPC_A,
+      ZXing.BarcodeFormat.UPC_E,
+      ZXing.BarcodeFormat.CODE_128
+    ]);
+    hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
+    return new ZXing.BrowserMultiFormatReader(hints, 150); // ~150ms entre tentatives
+  }
+
+  async function startScan(){
+    if (scanning) return;
+    setStatus('Ouverture de la caméra…');
+    document.getElementById('scanZone').style.display = 'block';
+    scanGuide.style.display = 'block';
+    codeReader = buildReader();
+
+    const constraints = {
+      video: {
+        facingMode: "environment",
+        width: { ideal: 1280 },
+        height: { ideal: 720 }
+      }
+    };
+
+    try{
+      scanning = true;
+      startBtn.textContent = 'Arrêter le scan';
+      startBtn.classList.add('stop');
+      setStatus('Visez le code-barres, à 10-15 cm, bien à plat…');
+
+      await codeReader.decodeFromConstraints(constraints, videoEl, (result, err) => {
+        if (result){
+          onBarcodeDetected(result.getText());
+        }
+        // les erreurs "NotFoundException" sont normales entre deux détections, on les ignore
+      });
+    }catch(err){
+      setStatus('Impossible d\'accéder à la caméra. Utilisez la saisie manuelle ci-dessous.', true);
+      scanning = false;
+      startBtn.textContent = 'Démarrer le scan';
+      startBtn.classList.remove('stop');
+      scanGuide.style.display = 'none';
+    }
+  }
+
+  async function stopScan(){
+    if (codeReader){
+      codeReader.reset();
+    }
+    scanning = false;
+    startBtn.textContent = 'Démarrer le scan';
+    startBtn.classList.remove('stop');
+    scanGuide.style.display = 'none';
+    document.getElementById('scanZone').style.display = 'none';
+    setStatus('');
+  }
+
+  startBtn.addEventListener('click', () => {
+    scanning ? stopScan() : startScan();
+  });
+
+  document.getElementById('manualBtn').addEventListener('click', () => {
+    const val = document.getElementById('manualEan').value.trim();
+    if (val) onBarcodeDetected(val);
+  });
+
+  let lastEan = null;
+  let processing = false;
+  async function onBarcodeDetected(ean){
+    if (processing) return; // ignore les détections qui arrivent pendant qu'on traite déjà un code
+    processing = true;
+    lastEan = ean;
+
+    // Confirmation immédiate, avant même de couper la caméra ou d'appeler le réseau
+    scanGuide.style.borderColor = '#3c6b4a';
+    if (navigator.vibrate) navigator.vibrate(80);
+    setStatus('Code détecté : ' + ean + ' — coupure caméra…');
+
+    if (scanning) await stopScan();
+
+    setStatus('Recherche du produit ' + ean + '…');
+    await lookupProduct(ean);
+    processing = false;
+    scanGuide.style.borderColor = 'var(--red)';
+  }
+
+  async function lookupProduct(ean){
+    try{
+      const res = await fetch(`https://world.openfoodfacts.org/api/v2/product/${ean}.json`);
+      const data = await res.json();
+      if (data.status !== 1){
+        setStatus('Produit introuvable dans Open Food Facts (code : ' + ean + ').', true);
+        return;
+      }
+      renderProduct(ean, data.product);
+      setStatus('');
+    }catch(err){
+      setStatus('Erreur réseau lors de la recherche du produit.', true);
+    }
+  }
+
+  function renderProduct(ean, p){
+    document.getElementById('productCard').classList.add('visible');
+    document.getElementById('prodImg').src = p.image_front_small_url || p.image_url || '';
+    document.getElementById('prodName').textContent = p.product_name_fr || p.product_name || 'Nom inconnu';
+    document.getElementById('prodBrand').textContent = p.brands || '—';
+    document.getElementById('prodEan').textContent = 'EAN ' + ean;
+    document.getElementById('prodIngredients').textContent = p.ingredients_text_fr || p.ingredients_text || 'Non renseigné.';
+    document.getElementById('prodAllergens').textContent = (p.allergens_tags && p.allergens_tags.length)
+      ? p.allergens_tags.map(a => a.replace('en:','')).join(', ')
+      : 'Aucun allergène signalé.';
+
+    // Nutrition
+    const n = p.nutriments || {};
+    const nutriLines = [];
+    if (n['energy-kcal_100g'] != null) nutriLines.push('Énergie : ' + n['energy-kcal_100g'] + ' kcal');
+    if (n.fat_100g != null) nutriLines.push('Matières grasses : ' + n.fat_100g + ' g');
+    if (n['saturated-fat_100g'] != null) nutriLines.push('dont saturées : ' + n['saturated-fat_100g'] + ' g');
+    if (n.carbohydrates_100g != null) nutriLines.push('Glucides : ' + n.carbohydrates_100g + ' g');
+    if (n.sugars_100g != null) nutriLines.push('dont sucres : ' + n.sugars_100g + ' g');
+    if (n.proteins_100g != null) nutriLines.push('Protéines : ' + n.proteins_100g + ' g');
+    if (n.salt_100g != null) nutriLines.push('Sel : ' + n.salt_100g + ' g');
+    document.getElementById('prodNutrition').textContent = nutriLines.length ? nutriLines.join(' — ') : 'Non renseigné.';
+
+    // Badges
+    const badgesEl = document.getElementById('prodBadges');
+    badgesEl.innerHTML = '';
+    if (p.nutriscore_grade){
+      const b = document.createElement('span');
+      b.className = 'badge nutri-' + p.nutriscore_grade;
+      b.textContent = 'Nutri-Score ' + p.nutriscore_grade.toUpperCase();
+      badgesEl.appendChild(b);
+    }
+    if (p.nova_group){
+      const b = document.createElement('span');
+      b.className = 'badge';
+      b.textContent = 'NOVA ' + p.nova_group;
+      badgesEl.appendChild(b);
+    }
+
+    // Reset price field, remember current product name for history
+    document.getElementById('priceInput').value = '';
+    document.getElementById('savePriceBtn').onclick = () => {
+      const price = document.getElementById('priceInput').value;
+      if (!price) return;
+      history.unshift({ name: p.product_name_fr || p.product_name || ean, price: parseFloat(price).toFixed(2) });
+      renderHistory();
+      setStatus('Prix enregistré pour cette session.');
+    };
+
+    document.getElementById('productCard').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+
+  function renderHistory(){
+    const el = document.getElementById('historyList');
+    if (!history.length){
+      el.innerHTML = '<div class="empty-history">Aucun produit scanné pour l\'instant.</div>';
+      return;
+    }
+    el.innerHTML = history.map(h =>
+      `<div class="history-item"><span class="name">${h.name}</span><span class="price">${h.price} €</span></div>`
+    ).join('');
+  }
+</script>
+
+</body>
+</html>
