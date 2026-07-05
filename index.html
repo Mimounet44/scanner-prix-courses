@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <title>Scanner Courses — Prix &amp; Contenu</title>
 <script src="https://unpkg.com/@zxing/library@0.21.3/umd/index.min.js"></script>
+<script src="https://unpkg.com/@zxing/browser@0.1.5/umd/index.min.js"></script>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Inter:wght@400;500;600;700&display=swap');
 
@@ -145,6 +146,27 @@
     min-height: 16px;
   }
   .status.error{ color: var(--red); }
+
+  .debug-panel{
+    background: #2a2926;
+    color: #d8d2bf;
+    font-family: 'Space Mono', monospace;
+    font-size: 11px;
+    padding: 10px;
+    margin-bottom: 14px;
+    line-height: 1.6;
+  }
+  .debug-row{ word-break: break-all; }
+  .debug-row span{ color: #f0b000; }
+  #debugCanvas{
+    display:block;
+    width: 100%;
+    max-height: 120px;
+    background: #000;
+    border: 1px solid #55524a;
+    margin-top: 6px;
+    image-rendering: pixelated;
+  }
 
   .product-card{
     margin-top: 18px;
@@ -330,6 +352,14 @@
 
   <div class="status" id="status"></div>
 
+  <div class="debug-panel" id="debugPanel">
+    <div class="debug-row">Résolution caméra : <span id="dbgVideoRes">—</span></div>
+    <div class="debug-row">Zone recadrée (px) : <span id="dbgCropRect">—</span></div>
+    <div class="debug-row">Tentatives : <span id="dbgAttempts">0</span> · Dernier résultat : <span id="dbgLastErr">—</span></div>
+    <div class="debug-row">Ce que le décodeur reçoit réellement :</div>
+    <canvas id="debugCanvas"></canvas>
+  </div>
+
   <div class="product-card" id="productCard">
     <div class="product-head">
       <img id="prodImg" src="" alt="">
@@ -400,7 +430,12 @@
   const startBtn = document.getElementById('startBtn');
   const videoEl = document.getElementById('video');
   const scanGuide = document.getElementById('scanGuide');
-  const cropCanvas = document.createElement('canvas'); // hors-écran, jamais affiché
+  const cropCanvas = document.getElementById('debugCanvas'); // visible : sert aussi de diagnostic
+  const dbgVideoRes = document.getElementById('dbgVideoRes');
+  const dbgCropRect = document.getElementById('dbgCropRect');
+  const dbgAttempts = document.getElementById('dbgAttempts');
+  const dbgLastErr = document.getElementById('dbgLastErr');
+  let attemptCount = 0;
 
   function setStatus(msg, isError){
     statusEl.textContent = msg || '';
@@ -417,7 +452,7 @@
       ZXing.BarcodeFormat.CODE_128
     ]);
     hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
-    return new ZXing.BrowserMultiFormatReader(hints);
+    return new ZXingBrowser.BrowserMultiFormatReader(hints);
   }
 
   // Convertit la position du cadre guide (en pixels CSS) en coordonnées natives
@@ -444,6 +479,10 @@
     cropCanvas.height = Math.round(srcH * UPSCALE);
     const ctx = cropCanvas.getContext('2d');
     ctx.drawImage(videoEl, srcX, srcY, srcW, srcH, 0, 0, cropCanvas.width, cropCanvas.height);
+
+    dbgVideoRes.textContent = nativeW + ' x ' + nativeH;
+    dbgCropRect.textContent = Math.round(srcX) + ',' + Math.round(srcY) + '  ' + Math.round(srcW) + 'x' + Math.round(srcH);
+
     return cropCanvas;
   }
 
@@ -451,15 +490,27 @@
     if (!scanning) return;
     const canvas = grabCroppedFrame();
     if (canvas){
+      attemptCount++;
+      dbgAttempts.textContent = attemptCount;
       try{
         const result = await codeReader.decodeFromCanvas(canvas);
         if (result){
+          dbgLastErr.textContent = 'TROUVÉ : ' + result.getText();
           onBarcodeDetected(result.getText());
           return; // onBarcodeDetected coupe le scan, pas besoin de reprogrammer
         }
       }catch(err){
-        // NotFoundException entre deux détections : normal, on ignore et on retente
+        // NotFoundException entre deux détections : normal, on ignore et on retente.
+        // Toute autre erreur est inhabituelle : on la journalise pour diagnostic.
+        if (!(err && err.name === 'NotFoundException')){
+          console.error('Erreur de décodage inattendue :', err);
+          dbgLastErr.textContent = (err && err.name) ? err.name + ' : ' + err.message : String(err);
+        } else {
+          dbgLastErr.textContent = 'aucun code détecté sur cette trame';
+        }
       }
+    } else {
+      dbgLastErr.textContent = 'trame non disponible (vidéo pas prête ?)';
     }
     decodeTimer = setTimeout(decodeLoop, 120);
   }
