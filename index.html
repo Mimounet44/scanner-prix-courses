@@ -80,8 +80,8 @@
   #video{ display:block; width:100%; max-height: 320px; object-fit: cover; }
   .scan-guide{
     position:absolute;
-    top:50%; left:8%;
-    width:84%; height:56px;
+    top:50%; left:6%;
+    width:88%; height:90px;
     transform: translateY(-50%);
     border: 2px solid var(--red);
     border-radius: 2px;
@@ -393,12 +393,14 @@
   let codeReader = null;
   let mediaStream = null;
   let scanning = false;
+  let decodeTimer = null;
   const history = []; // { name, price } — en mémoire, non persistant
 
   const statusEl = document.getElementById('status');
   const startBtn = document.getElementById('startBtn');
   const videoEl = document.getElementById('video');
   const scanGuide = document.getElementById('scanGuide');
+  const cropCanvas = document.createElement('canvas'); // hors-écran, jamais affiché
 
   function setStatus(msg, isError){
     statusEl.textContent = msg || '';
@@ -415,7 +417,51 @@
       ZXing.BarcodeFormat.CODE_128
     ]);
     hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
-    return new ZXing.BrowserMultiFormatReader(hints, 150); // ~150ms entre tentatives
+    return new ZXing.BrowserMultiFormatReader(hints);
+  }
+
+  // Convertit la position du cadre guide (en pixels CSS) en coordonnées natives
+  // de la vidéo (object-fit: cover implique un recadrage qu'il faut compenser),
+  // puis dessine cette zone agrandie dans un canvas hors-écran pour le décodage.
+  function grabCroppedFrame(){
+    const videoRect = videoEl.getBoundingClientRect();
+    const guideRect = scanGuide.getBoundingClientRect();
+    const nativeW = videoEl.videoWidth;
+    const nativeH = videoEl.videoHeight;
+    if (!nativeW || !nativeH || !videoRect.width) return null;
+
+    const scale = Math.max(videoRect.width / nativeW, videoRect.height / nativeH);
+    const offsetX = (nativeW * scale - videoRect.width) / 2;
+    const offsetY = (nativeH * scale - videoRect.height) / 2;
+
+    const srcX = (guideRect.left - videoRect.left + offsetX) / scale;
+    const srcY = (guideRect.top - videoRect.top + offsetY) / scale;
+    const srcW = guideRect.width / scale;
+    const srcH = guideRect.height / scale;
+
+    const UPSCALE = 2.5;
+    cropCanvas.width = Math.round(srcW * UPSCALE);
+    cropCanvas.height = Math.round(srcH * UPSCALE);
+    const ctx = cropCanvas.getContext('2d');
+    ctx.drawImage(videoEl, srcX, srcY, srcW, srcH, 0, 0, cropCanvas.width, cropCanvas.height);
+    return cropCanvas;
+  }
+
+  async function decodeLoop(){
+    if (!scanning) return;
+    const canvas = grabCroppedFrame();
+    if (canvas){
+      try{
+        const result = await codeReader.decodeFromCanvas(canvas);
+        if (result){
+          onBarcodeDetected(result.getText());
+          return; // onBarcodeDetected coupe le scan, pas besoin de reprogrammer
+        }
+      }catch(err){
+        // NotFoundException entre deux détections : normal, on ignore et on retente
+      }
+    }
+    decodeTimer = setTimeout(decodeLoop, 120);
   }
 
   async function startScan(){
@@ -428,23 +474,22 @@
     const constraints = {
       video: {
         facingMode: "environment",
-        width: { ideal: 1280 },
-        height: { ideal: 720 }
+        width: { ideal: 1920 },
+        height: { ideal: 1080 }
       }
     };
 
     try{
+      mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+      videoEl.srcObject = mediaStream;
+      await videoEl.play();
+
       scanning = true;
       startBtn.textContent = 'Arrêter le scan';
       startBtn.classList.add('stop');
-      setStatus('Visez le code-barres, à 10-15 cm, bien à plat…');
+      setStatus('Placez le code-barres dans le cadre rouge, bien à plat…');
 
-      await codeReader.decodeFromConstraints(constraints, videoEl, (result, err) => {
-        if (result){
-          onBarcodeDetected(result.getText());
-        }
-        // les erreurs "NotFoundException" sont normales entre deux détections, on les ignore
-      });
+      decodeLoop();
     }catch(err){
       setStatus('Impossible d\'accéder à la caméra. Utilisez la saisie manuelle ci-dessous.', true);
       scanning = false;
@@ -455,10 +500,13 @@
   }
 
   async function stopScan(){
-    if (codeReader){
-      codeReader.reset();
-    }
     scanning = false;
+    if (decodeTimer) clearTimeout(decodeTimer);
+    if (mediaStream){
+      mediaStream.getTracks().forEach(t => t.stop());
+      mediaStream = null;
+    }
+    videoEl.srcObject = null;
     startBtn.textContent = 'Démarrer le scan';
     startBtn.classList.remove('stop');
     scanGuide.style.display = 'none';
