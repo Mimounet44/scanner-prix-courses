@@ -474,6 +474,14 @@
     let srcW = guideRect.width / scale;
     let srcH = guideRect.height / scale;
 
+    // Marge de sécurité : le cadre visible à l'écran sert de guide de visée,
+    // mais on recadre un peu plus large pour ne pas couper la "zone silencieuse"
+    // (marge blanche) dont ZXing a besoin de part et d'autre des barres.
+    const PAD_X = srcW * 0.18;
+    const PAD_Y = srcH * 0.35;
+    srcX -= PAD_X; srcW += PAD_X * 2;
+    srcY -= PAD_Y; srcH += PAD_Y * 2;
+
     // Clamp dans les limites réelles de la vidéo native, pour ne jamais passer
     // une zone nulle/négative ou hors-cadre à drawImage (source d'un blocage silencieux).
     srcX = Math.max(0, Math.min(srcX, nativeW - 1));
@@ -532,7 +540,7 @@
     if (scanning) return;
 
     if (typeof ZXing === 'undefined' || typeof ZXingBrowser === 'undefined'){
-      setStatus('Erreur de chargement : la librairie de scan (ZXing) n\'a pas pu se charger. Vérifie ta connexion et recharge la page.', true);
+      setStatus('Erreur de chargement : la librairie de scan n\'a pas pu se charger (ZXing: ' + typeof ZXing + ', ZXingBrowser: ' + typeof ZXingBrowser + '). Vérifie ta connexion et recharge la page.', true);
       console.error('ZXing défini ?', typeof ZXing, '— ZXingBrowser défini ?', typeof ZXingBrowser);
       return;
     }
