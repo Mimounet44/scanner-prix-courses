@@ -463,16 +463,23 @@
     const guideRect = scanGuide.getBoundingClientRect();
     const nativeW = videoEl.videoWidth;
     const nativeH = videoEl.videoHeight;
-    if (!nativeW || !nativeH || !videoRect.width) return null;
+    if (!nativeW || !nativeH || !videoRect.width || !guideRect.width || !guideRect.height) return null;
 
     const scale = Math.max(videoRect.width / nativeW, videoRect.height / nativeH);
     const offsetX = (nativeW * scale - videoRect.width) / 2;
     const offsetY = (nativeH * scale - videoRect.height) / 2;
 
-    const srcX = (guideRect.left - videoRect.left + offsetX) / scale;
-    const srcY = (guideRect.top - videoRect.top + offsetY) / scale;
-    const srcW = guideRect.width / scale;
-    const srcH = guideRect.height / scale;
+    let srcX = (guideRect.left - videoRect.left + offsetX) / scale;
+    let srcY = (guideRect.top - videoRect.top + offsetY) / scale;
+    let srcW = guideRect.width / scale;
+    let srcH = guideRect.height / scale;
+
+    // Clamp dans les limites réelles de la vidéo native, pour ne jamais passer
+    // une zone nulle/négative ou hors-cadre à drawImage (source d'un blocage silencieux).
+    srcX = Math.max(0, Math.min(srcX, nativeW - 1));
+    srcY = Math.max(0, Math.min(srcY, nativeH - 1));
+    srcW = Math.max(1, Math.min(srcW, nativeW - srcX));
+    srcH = Math.max(1, Math.min(srcH, nativeH - srcY));
 
     const UPSCALE = 2.5;
     cropCanvas.width = Math.round(srcW * UPSCALE);
@@ -488,31 +495,37 @@
 
   async function decodeLoop(){
     if (!scanning) return;
-    const canvas = grabCroppedFrame();
-    if (canvas){
-      attemptCount++;
-      dbgAttempts.textContent = attemptCount;
-      try{
-        const result = await codeReader.decodeFromCanvas(canvas);
-        if (result){
-          dbgLastErr.textContent = 'TROUVÉ : ' + result.getText();
-          onBarcodeDetected(result.getText());
-          return; // onBarcodeDetected coupe le scan, pas besoin de reprogrammer
+    try{
+      const canvas = grabCroppedFrame();
+      if (canvas){
+        attemptCount++;
+        dbgAttempts.textContent = attemptCount;
+        try{
+          const result = await codeReader.decodeFromCanvas(canvas);
+          if (result){
+            dbgLastErr.textContent = 'TROUVÉ : ' + result.getText();
+            onBarcodeDetected(result.getText());
+            return; // onBarcodeDetected coupe le scan, pas besoin de reprogrammer
+          }
+        }catch(err){
+          // NotFoundException entre deux détections : normal, on ignore et on retente.
+          // Toute autre erreur est inhabituelle : on la journalise pour diagnostic.
+          if (!(err && err.name === 'NotFoundException')){
+            console.error('Erreur de décodage inattendue :', err);
+            dbgLastErr.textContent = (err && err.name) ? err.name + ' : ' + err.message : String(err);
+          } else {
+            dbgLastErr.textContent = 'aucun code détecté sur cette trame';
+          }
         }
-      }catch(err){
-        // NotFoundException entre deux détections : normal, on ignore et on retente.
-        // Toute autre erreur est inhabituelle : on la journalise pour diagnostic.
-        if (!(err && err.name === 'NotFoundException')){
-          console.error('Erreur de décodage inattendue :', err);
-          dbgLastErr.textContent = (err && err.name) ? err.name + ' : ' + err.message : String(err);
-        } else {
-          dbgLastErr.textContent = 'aucun code détecté sur cette trame';
-        }
+      } else {
+        dbgLastErr.textContent = 'trame non disponible (vidéo pas prête ?)';
       }
-    } else {
-      dbgLastErr.textContent = 'trame non disponible (vidéo pas prête ?)';
+    }catch(fatalErr){
+      // Ne doit jamais arrêter la boucle : on journalise et on continue.
+      console.error('Erreur capture de trame :', fatalErr);
+      dbgLastErr.textContent = 'erreur capture : ' + (fatalErr && fatalErr.message ? fatalErr.message : String(fatalErr));
     }
-    decodeTimer = setTimeout(decodeLoop, 120);
+    if (scanning) decodeTimer = setTimeout(decodeLoop, 120);
   }
 
   async function startScan(){
@@ -531,9 +544,15 @@
     };
 
     try{
-      mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+      const cameraTimeout = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('TIMEOUT_CAMERA')), 8000)
+      );
+      mediaStream = await Promise.race([
+        navigator.mediaDevices.getUserMedia(constraints),
+        cameraTimeout
+      ]);
       videoEl.srcObject = mediaStream;
-      await videoEl.play();
+      await Promise.race([videoEl.play(), cameraTimeout]);
 
       scanning = true;
       startBtn.textContent = 'Arrêter le scan';
@@ -542,7 +561,12 @@
 
       decodeLoop();
     }catch(err){
-      setStatus('Impossible d\'accéder à la caméra. Utilisez la saisie manuelle ci-dessous.', true);
+      if (err && err.message === 'TIMEOUT_CAMERA'){
+        setStatus('La caméra ne répond pas après 8 secondes (blocage réel, pas juste lent). Recharge la page et réessaie.', true);
+      } else {
+        setStatus('Impossible d\'accéder à la caméra : ' + (err && err.name ? err.name : String(err)), true);
+      }
+      if (mediaStream){ mediaStream.getTracks().forEach(t => t.stop()); mediaStream = null; }
       scanning = false;
       startBtn.textContent = 'Démarrer le scan';
       startBtn.classList.remove('stop');
